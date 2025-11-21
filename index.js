@@ -2,8 +2,8 @@ import express from "express";
 import cors from "cors";
 import pkg from "@supabase/supabase-js";
 import MercadoPagoConfig from "mercadopago";
-import Preference from "mercadopago/resources/preferences.js";
-import Payment from "mercadopago/resources/payment.js";
+import Preference from "mercadopago/src/resources/preferences.js";
+import Payment from "mercadopago/src/resources/payment.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -22,7 +22,7 @@ const supabase = createClient(
 );
 
 // -------------------------------------------------------------
-// MERCADO PAGO (SDK V2 – FUNCIONA NO RENDER)
+// MERCADO PAGO SDK 2.0.16
 // -------------------------------------------------------------
 const mpClient = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -35,7 +35,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Helper de UUID
+// Helper UUID
 const isUuid = (value) => {
   if (typeof value !== "string") return false;
   const uuidRegex =
@@ -60,14 +60,14 @@ app.post("/create-checkout", async (req, res) => {
 
     if (normalizedPlan !== "pro") {
       return res.status(400).json({
-        error: normalizedPlan === "pro_plus"
-          ? "PRO+ ainda está em desenvolvimento"
-          : "Plano inválido"
+        error:
+          normalizedPlan === "pro_plus"
+            ? "Plano PRO+ em desenvolvimento"
+            : "Plano inválido",
       });
     }
 
-    // Criação da preferência do PIX
-    const result = await preferenceAPI.create({
+    const pref = await preferenceAPI.create({
       body: {
         items: [
           {
@@ -93,15 +93,12 @@ app.post("/create-checkout", async (req, res) => {
         auto_return: "approved",
         notification_url:
           "https://guied-subscriptions-api.onrender.com/webhook/mercadopago",
-
         metadata: {
           user_id,
           plan: "pro",
         },
       },
     });
-
-    const pref = result;
 
     // Salvar no Supabase
     const { data, error } = await supabase
@@ -126,7 +123,7 @@ app.post("/create-checkout", async (req, res) => {
       subscription: data,
     });
   } catch (err) {
-    console.error("Erro em /create-checkout:", err);
+    console.error("Erro create-checkout:", err);
     return res.status(500).json({ error: "Erro interno" });
   }
 });
@@ -176,7 +173,7 @@ app.get("/subscription-status", async (req, res) => {
         : 0,
     });
   } catch (err) {
-    console.error("Erro em /subscription-status:", err);
+    console.error("Erro /subscription-status:", err);
     return res.status(500).json({ error: "Erro interno" });
   }
 });
@@ -194,7 +191,7 @@ app.post("/cancel-subscription", async (req, res) => {
     if (!isUuid(user_id))
       return res.status(400).json({ error: "user_id não é um UUID válido" });
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("subscriptions")
       .select("*")
       .eq("user_id", user_id)
@@ -205,30 +202,26 @@ app.post("/cancel-subscription", async (req, res) => {
     if (!data)
       return res.status(404).json({ error: "Assinatura não encontrada" });
 
-    const { error: updError } = await supabase
+    await supabase
       .from("subscriptions")
       .update({ status: "canceled" })
       .eq("id", data.id);
 
-    if (updError)
-      return res.status(500).json({ error: "Erro ao cancelar assinatura" });
-
     return res.json({ message: "Assinatura cancelada", canceled: true });
   } catch (err) {
-    console.error("Erro em /cancel-subscription:", err);
+    console.error("Erro cancel-subscription:", err);
     return res.status(500).json({ error: "Erro interno" });
   }
 });
 
 // ======================================================
-// WEBHOOK MERCADO PAGO
+// WEBHOOK
 // ======================================================
 app.post("/webhook/mercadopago", async (req, res) => {
   try {
     const paymentId = req.body?.data?.id;
     if (!paymentId) return res.status(200).send("ok");
 
-    // Buscar pagamento
     const payInfo = await paymentAPI.get({ id: paymentId });
 
     if (payInfo.status === "approved") {
@@ -271,7 +264,7 @@ app.post("/webhook/mercadopago", async (req, res) => {
 });
 
 // ======================================================
-// START SERVER
+// START
 // ======================================================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () =>
