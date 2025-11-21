@@ -72,7 +72,7 @@ app.post("/create-checkout", async (req, res) => {
             auto_return: "approved",
 
             notification_url:
-                "https://SEU-RENDER-APP.onrender.com/webhook/mercadopago",
+                "https://guied-subscriptions-api.onrender.com",
         };
 
         // Criar preferência — SDK v3
