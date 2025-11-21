@@ -1,8 +1,12 @@
 import express from "express";
 import cors from "cors";
 import pkg from "@supabase/supabase-js";
-import mercadopago from "mercadopago";
 import dotenv from "dotenv";
+
+// NOVO SDK OFICIAL (v2)
+import MercadoPagoConfig from "mercadopago";
+import Preference from "mercadopago/dist/clients/preference.js";
+import Payment from "mercadopago/dist/clients/payment.js";
 
 dotenv.config();
 
@@ -20,21 +24,25 @@ const supabase = createClient(
 );
 
 // -------------------------------------------------------------
-// MERCADO PAGO (SDK 2, formato compatível Render)
+// MERCADO PAGO (SDK NOVO V2)
 // -------------------------------------------------------------
-mercadopago.configure({
-  access_token: process.env.MP_ACCESS_TOKEN,
+const mpClient = new MercadoPagoConfig({
+  accessToken: process.env.MP_ACCESS_TOKEN,
 });
+
+const preferenceClient = new Preference(mpClient);
+const paymentClient = new Payment(mpClient);
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 // UUID helper
-const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+const isUuid = (v) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 // ======================================================
-// CREATE CHECKOUT
+// CREATE CHECKOUT PIX – PRO
 // ======================================================
 app.post("/create-checkout", async (req, res) => {
   try {
@@ -49,7 +57,7 @@ app.post("/create-checkout", async (req, res) => {
     if (String(plan).toLowerCase() !== "pro")
       return res.status(400).json({ error: "Plano inválido" });
 
-    const preference = {
+    const preferenceBody = {
       items: [
         {
           title: "Assinatura Guied – PRO (Mensal)",
@@ -66,21 +74,26 @@ app.post("/create-checkout", async (req, res) => {
           { id: "ticket" },
         ],
       },
-      back_urls: {
-        success: "https://guied.app/success",
-        failure: "https://guied.app/failure",
-        pending: "https://guied.app/pending",
-      },
-      auto_return: "approved",
       notification_url:
         "https://guied-subscriptions-api.onrender.com/webhook/mercadopago",
+      back_urls: {
+        success: "https://guied.app/success",
+        pending: "https://guied.app/pending",
+        failure: "https://guied.app/failure",
+      },
+      auto_return: "approved",
       metadata: {
         user_id,
         plan: "pro",
       },
     };
 
-    const mpRes = await mercadopago.preferences.create(preference);
+    const mpRes = await preferenceClient.create({
+      body: preferenceBody,
+    });
+
+    const preferenceId = mpRes.id;
+    const initPoint = mpRes.init_point;
 
     const { data, error } = await supabase
       .from("subscriptions")
@@ -88,14 +101,14 @@ app.post("/create-checkout", async (req, res) => {
         user_id,
         plan: "pro",
         status: "pending",
-        external_preference_id: mpRes.body.id,
+        external_preference_id: preferenceId,
       })
       .select()
       .single();
 
     return res.json({
-      init_point: mpRes.body.init_point,
-      preference_id: mpRes.body.id,
+      init_point: initPoint,
+      preference_id: preferenceId,
       subscription: data,
     });
   } catch (err) {
@@ -105,7 +118,7 @@ app.post("/create-checkout", async (req, res) => {
 });
 
 // ======================================================
-// SUBSCRIPTION STATUS
+// GET STATUS
 // ======================================================
 app.get("/subscription-status", async (req, res) => {
   try {
@@ -142,21 +155,21 @@ app.get("/subscription-status", async (req, res) => {
 });
 
 // ======================================================
-// WEBHOOK
+// WEBHOOK MERCADO PAGO
 // ======================================================
 app.post("/webhook/mercadopago", async (req, res) => {
   try {
     const paymentId = req.body?.data?.id;
+
     if (!paymentId) return res.status(200).send("ok");
 
-    const payment = await mercadopago.payment.findById(paymentId);
-    const info = payment.body;
+    const paymentInfo = await paymentClient.get({ id: paymentId });
 
-    if (info.status === "approved") {
+    if (paymentInfo.status === "approved") {
       const preferenceId =
-        info.order?.id ||
-        info.metadata?.preference_id ||
-        info.metadata?.external_preference_id;
+        paymentInfo.order?.id ||
+        paymentInfo.metadata?.preference_id ||
+        paymentInfo.metadata?.external_preference_id;
 
       const { data } = await supabase
         .from("subscriptions")
