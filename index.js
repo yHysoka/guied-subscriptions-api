@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import pkg from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import fetch from "node-fetch";
 
 // NOVO SDK OFICIAL (v2)
 import MercadoPagoConfig from "mercadopago";
@@ -82,11 +83,11 @@ app.post("/create-checkout", async (req, res) => {
         failure: "https://guied.app/failure",
       },
       auto_return: "approved",
-      metadata: {
-        user_id,
-        plan: "pro",
-      },
+
+      // 🔑 ISSO É A CHAVE DO SISTEMA
+      external_reference: `${user_id}|pro`,
     };
+
 
     const mpRes = await preferenceClient.create({
       body: preferenceBody,
@@ -159,37 +160,34 @@ app.get("/subscription-status", async (req, res) => {
 // ======================================================
 app.post("/webhook/mercadopago", async (req, res) => {
   try {
-    const paymentId = req.body?.data?.id;
+    console.log("🟪 WEBHOOK RECEBIDO:", req.body);
 
-    if (!paymentId) return res.status(200).send("ok");
+    // MERCHANT ORDER (principal)
+    if (req.body.topic === "merchant_order") {
+      const orderId = req.body.resource.split("/").pop();
 
-    const paymentInfo = await paymentClient.get({ id: paymentId });
+      const order = await fetch(
+        `https://api.mercadolibre.com/merchant_orders/${orderId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+          },
+        }
+      ).then((r) => r.json());
 
-    if (paymentInfo.status === "approved") {
-      const preferenceId = paymentInfo.order?.id;
+      const payment = order.payments?.find(
+        (p) => p.status === "approved"
+      );
 
+      if (!payment) return res.status(200).send("ok");
 
-      const { data } = await supabase
-        .from("user_subscriptions")
-        .select("*")
-        .eq("external_preference_id", preferenceId)
-        .maybeSingle();
+      await activateSubscription(payment.id);
+      return res.status(200).send("ok");
+    }
 
-      if (data) {
-        const started = new Date();
-        const expires = new Date();
-        expires.setDate(expires.getDate() + 30);
-
-        await supabase
-          .from("user_subscriptions")
-          .update({
-            status: "active",
-            started_at: started.toISOString(),
-            expires_at: expires.toISOString(),
-            external_payment_id: String(paymentId),
-          })
-          .eq("id", data.id);
-      }
+    // PAYMENT direto (fallback)
+    if (req.body?.data?.id) {
+      await activateSubscription(req.body.data.id);
     }
 
     res.status(200).send("ok");
@@ -198,6 +196,31 @@ app.post("/webhook/mercadopago", async (req, res) => {
     res.status(200).send("ok");
   }
 });
+async function activateSubscription(paymentId) {
+  const paymentInfo = await paymentClient.get({ id: paymentId });
+
+  if (paymentInfo.status !== "approved") return;
+
+  const externalRef = paymentInfo.external_reference;
+  if (!externalRef) return;
+
+  const [user_id, plan] = externalRef.split("|");
+
+  const expires = new Date();
+  expires.setDate(expires.getDate() + 30);
+
+  await supabase
+    .from("user_subscriptions")
+    .update({
+      status: "active",
+      plan,
+      expires_at: expires.toISOString(),
+    })
+    .eq("user_id", user_id);
+
+  console.log("✅ Assinatura ativada:", user_id);
+}
+
 
 // ======================================================
 // START SERVER
