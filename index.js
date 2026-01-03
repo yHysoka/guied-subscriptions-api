@@ -209,17 +209,26 @@ async function activateSubscription(paymentId) {
   const expires = new Date();
   expires.setDate(expires.getDate() + 30);
 
+  // 1️⃣ desativa qualquer lixo anterior
   await supabase
     .from("user_subscriptions")
-    .update({
-      status: "active",
-      plan,
-      expires_at: expires.toISOString(),
-    })
+    .update({ status: "inactive" })
     .eq("user_id", user_id);
 
-  console.log("✅ Assinatura ativada:", user_id);
+  // 2️⃣ cria UMA assinatura limpa
+  await supabase
+    .from("user_subscriptions")
+    .insert({
+      user_id,
+      plan,
+      status: "active",
+      expires_at: expires.toISOString(),
+      renews: false,
+    });
+
+  console.log("✅ Assinatura ativada corretamente:", user_id);
 }
+
 
 
 // ======================================================
