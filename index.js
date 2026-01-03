@@ -96,7 +96,7 @@ app.post("/create-checkout", async (req, res) => {
     const initPoint = mpRes.init_point;
 
     const { data, error } = await supabase
-      .from("subscriptions")
+      .from("user_subscriptions")
       .insert({
         user_id,
         plan: "pro",
@@ -128,7 +128,7 @@ app.get("/subscription-status", async (req, res) => {
       return res.status(400).json({ error: "UUID inválido" });
 
     const { data } = await supabase
-      .from("subscriptions")
+      .from("user_subscriptions")
       .select("*")
       .eq("user_id", user_id)
       .order("created_at", { ascending: false })
@@ -166,13 +166,11 @@ app.post("/webhook/mercadopago", async (req, res) => {
     const paymentInfo = await paymentClient.get({ id: paymentId });
 
     if (paymentInfo.status === "approved") {
-      const preferenceId =
-        paymentInfo.order?.id ||
-        paymentInfo.metadata?.preference_id ||
-        paymentInfo.metadata?.external_preference_id;
+      const preferenceId = paymentInfo.order?.id;
+
 
       const { data } = await supabase
-        .from("subscriptions")
+        .from("user_subscriptions")
         .select("*")
         .eq("external_preference_id", preferenceId)
         .maybeSingle();
@@ -183,7 +181,7 @@ app.post("/webhook/mercadopago", async (req, res) => {
         expires.setDate(expires.getDate() + 30);
 
         await supabase
-          .from("subscriptions")
+          .from("user_subscriptions")
           .update({
             status: "active",
             started_at: started.toISOString(),
